@@ -199,3 +199,36 @@ pair<bool, bytes> dev::crypto::alt_bn128_G1_mul(dev::bytesConstRef _in)
 		return {false, bytes{}};
 	}
 }
+
+/* Entry points for the fuzzer */
+
+extern "C" void C_alt_bn128_pairing_product(const uint8_t* data, size_t size, uint8_t* output)
+{
+    pair<bool, bytes>res = dev::crypto::alt_bn128_pairing_product( bytesConstRef(data, size) );
+    if ( res.first == true ) {
+        memcpy(output, &res.second[0], 32);
+    }
+}
+
+extern "C" void C_alt_bn128_G1_add(const uint8_t* data, size_t size, uint8_t* output)
+{
+    pair<bool, bytes>res = dev::crypto::alt_bn128_G1_add( bytesConstRef(data, size) );
+    if ( res.first == true ) {
+        memcpy(output, &res.second[0], 64);
+    }
+}
+
+extern "C" void C_alt_bn128_G1_mul(const uint8_t* data, size_t size, uint8_t* output)
+{
+    pair<bool, bytes>res = dev::crypto::alt_bn128_G1_mul( bytesConstRef(data, size) );
+    if ( res.first == true ) {
+        memcpy(output, &res.second[0], 64);
+    }
+}
+
+/* To prevent a linking error */
+
+extern "C" void look_up_our_self(void* p)
+{
+    (void)p;
+}
