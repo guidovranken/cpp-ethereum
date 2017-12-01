@@ -123,7 +123,7 @@ void VM::optimize()
 	}
 	
 #ifdef EVM_DO_FIRST_PASS_OPTIMIZATION
-	
+#if 0 /* Disabled in fuzzing mode to avoid logging discrepancies across clients */
 	TRACE_STR(1, "Do first pass optimizations")
 	for (size_t pc = 0; pc < nBytes; ++pc)
 	{
@@ -195,6 +195,7 @@ void VM::optimize()
 		}
 	}
 	TRACE_STR(1, "Finished optimizations")
+#endif
 #endif	
 }
 
