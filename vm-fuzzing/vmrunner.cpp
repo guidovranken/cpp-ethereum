@@ -1,87 +1,85 @@
-#include "vmrunner.h"
-#include <test/tools/libtestutils/TestLastBlockHashes.h>
+#include <libdevcore/CommonIO.h>
+#include <libdevcore/Log.h>
+#include <libethereum/Block.h>
 #include <libethereum/ChainParams.h>
 #include <libethereum/Executive.h>
+#include <libethereum/ExtVM.h>
+#include <libethereum/State.h>
+#include <libethereum/Transaction.h>
+#include <libevm/ExtVMFace.h>
+#include <libevm/VM.h>
 #include <libevm/VMFactory.h>
+#include <test/tools/libtesteth/BlockChainHelper.h>
+#include <test/tools/libtesteth/TestHelper.h>
+#include <test/tools/libtestutils/TestLastBlockHashes.h>
 
 typedef std::vector<uint8_t> stack_item_t;
 typedef std::vector<stack_item_t> stack_t;
 typedef std::pair<uint64_t, uint64_t> address_opcode_t;
 typedef std::vector< address_opcode_t > vm_trace_t;
+typedef uint64_t gas_item_t;
+typedef std::vector<gas_item_t> gas_t;
 
 using namespace std;
 using namespace dev;
 using namespace dev::eth;
 using namespace dev::test;
 
+/* Various traces, exported to the fuzzer */
+gas_t g_gas;
 vm_trace_t g_trace;
+stack_t prev_stack;
 stack_t g_stack;
+
 bool g_do_trace;
 uint64_t g_execution_num;
+uint64_t g_max_pc;
 
-FakeExtVM::FakeExtVM(EnvInfo const& _envInfo, unsigned _depth):			/// TODO: XXX: remove the default argument & fix.
-	ExtVMFace(_envInfo, Address(), Address(), Address(), 0, 1, bytesConstRef(), bytes(), EmptySHA3, false, _depth)
-{}
-
-std::pair<h160, eth::owning_bytes_ref> FakeExtVM::create(u256 _endowment, u256& io_gas, bytesConstRef _init, Instruction , u256, OnOpFunc const&)
-{
-	Address na = right160(sha3(rlpList(myAddress, get<1>(addresses[myAddress]))));
-	Transaction t(_endowment, gasPrice, io_gas, _init.toBytes());
-	//callcreates.push_back(t);
-	return {na, eth::owning_bytes_ref{}};
-}
-
-std::pair<bool, eth::owning_bytes_ref> FakeExtVM::call(CallParameters& _p)
-{
-	Transaction t(_p.valueTransfer, gasPrice, _p.gas, _p.receiveAddress, _p.data.toVector());
-	//callcreates.push_back(t);
-	return {true, eth::owning_bytes_ref{}};  // Return empty output.
-}
-
-h256 FakeExtVM::blockHash(u256 _number)
-{
-	//cnote << "Warning: using fake blockhash code!\n";
-	if (_number < envInfo().number() && _number >= (std::max<u256>(256, envInfo().number()) - 256))
-		return sha3(toString(_number));
-
-	return h256();
-}
-
-void FakeExtVM::set(Address _a, u256 _myBalance, u256 _myNonce, map<u256, u256> const& _storage, bytes const& _code)
-{
-	get<0>(addresses[_a]) = _myBalance;
-	get<1>(addresses[_a]) = _myNonce;
-	get<2>(addresses[_a]) = _storage;
-	get<3>(addresses[_a]) = _code;
-}
-
-void FakeExtVM::reset(u256 _myBalance, u256 _myNonce, map<u256, u256> const& _storage)
-{
-	//callcreates.clear();
-	addresses.clear();
-	set(myAddress, _myBalance, _myNonce, _storage, get<3>(addresses[myAddress]));
-}
-
+/* Called by the fuzzer to retrieve instruction trace after execution */
 vm_trace_t cpp_get_trace(void)
 {
     return g_trace;
 }
 
+/* Called by the fuzzer to retrieve stack after execution */
 stack_t cpp_get_stack(void)
 {
     return g_stack;
 }
 
-eth::OnOpFunc FakeExtVM::simpleTrace() const
+/* Called by the fuzzer to retrieve gas trace after execution */
+gas_t cpp_get_gas(void)
 {
+    return g_gas;
+}
 
-	return [](uint64_t steps, uint64_t pc, eth::Instruction inst, bigint newMemSize, bigint gasCost, bigint gas, dev::eth::VM* voidVM, dev::eth::ExtVMFace const* voidExt)
-	{
-		FakeExtVM const& ext = *static_cast<FakeExtVM const*>(voidExt);
-		eth::VM& vm = *voidVM;
+eth::OnOpFunc simpleTrace()
+{
+    /* Called by the VM for every executed instruction. */
+    return [](uint64_t steps, uint64_t pc, eth::Instruction inst, bigint newMemSize, bigint gasCost, bigint gas, dev::eth::VM* voidVM, dev::eth::ExtVMFace const* voidExt)
+    {
+        /* Disable compiler warnings for unused variables */
+        (void)steps;
+        (void)newMemSize;
+        (void)gasCost;
 
-        g_stack.clear();
-		for (auto i: vm.stack()) {
+        ExtVM const& ext = *static_cast<ExtVM const*>(voidExt);
+        eth::VM& vm = *voidVM;
+        stack_t cur_stack;
+
+        /* If the VM tries to fetch an instruction from a non-existing code address,
+         * this is logged as STOP instruction.
+         * Intercept this behavior and don't log the artificial STOP.
+         */
+        if ( pc >= g_max_pc ) {
+            if ( (Instruction)inst != Instruction::STOP ) {
+                printf("??? OOB instruction is not STOP\n");
+                abort();
+            }
+            return;
+        }
+
+        for (auto i: vm.stack()) {
             stack_item_t stack_item;
 
             /* Convert Boost bigint to bytes */
@@ -90,16 +88,33 @@ eth::OnOpFunc FakeExtVM::simpleTrace() const
             for (int j = stack_item.size(); j < 32; j++) {
                 stack_item.push_back(0x00);
             }
-            g_stack.push_back(stack_item);
+            cur_stack.push_back(stack_item);
         }
 
+        /* Stack logging must be delayed by one execution to be aligned with
+         * Parity/Geth logging behavior */
+        g_stack = prev_stack;
+        prev_stack = cur_stack;
+
         if ( g_do_trace == true ) {
-            printf("[%zu] %zu : %s\n", g_execution_num, pc, instructionInfo((Instruction)inst).name.c_str());
+            /* Print current variables if --trace is specified */
+            std::cout << "[" << g_execution_num << "] " << pc << " : " << instructionInfo((Instruction)inst).name << std::endl;
+
+            std::cout << "Stack: [";
+            for ( auto S : cur_stack ) {
+                std::cout << (h256)S << " ";
+            }
+            std::cout << "]" << std::endl;
+
+            std::cout << "Gas: " << gas << std::endl;
+            std::cout << "Depth: " << ext.depth + 1 << std::endl;
         }
 
         g_execution_num++;
+
         g_trace.push_back( address_opcode_t(pc, (uint64_t)inst));
-	};
+        g_gas.push_back(static_cast<uint64_t>(gas));
+    };
 }
 
 int cpp_run_vm(
@@ -115,34 +130,63 @@ int cpp_run_vm(
         uint64_t balance)
 {
     g_trace.clear();
-    g_do_trace = do_trace;
-    g_execution_num = 0;
+    g_stack.clear();
+    g_gas.clear();
+    prev_stack.clear();
 
-	BlockHeader blockHeader;
-	blockHeader.setGasLimit(gaslimit);
-	blockHeader.setDifficulty(difficulty);
-	blockHeader.setTimestamp(timestamp);
-	blockHeader.setAuthor(Address(0x155));
-	blockHeader.setNumber(blocknumber);
+    g_do_trace = do_trace;
+    g_execution_num = 1;
+
+    /* No logging to stderr */
+    g_logVerbosity = 0;
+
+    BlockHeader blockHeader;
+    blockHeader.setGasLimit(gaslimit);
+    blockHeader.setDifficulty(difficulty);
+    blockHeader.setTimestamp(timestamp);
+    blockHeader.setAuthor(Address(0));
+    blockHeader.setNumber(blocknumber);
 
     TestLastBlockHashes lastBlockHashes(h256s(256, h256()));
-	eth::EnvInfo env(blockHeader, lastBlockHashes, 0);
+    eth::EnvInfo env(blockHeader, lastBlockHashes, 0);
 
-    FakeExtVM fev(env);
+    Ethash::init();
+    ChainParams p = ChainParams(genesisInfo(eth::Network::ByzantiumTest));
+
+    BlockChain blockchain(p, "/tmp/X", WithExisting::Kill);
+    OverlayDB stateDB = OverlayDB();
+    Address addr(0x155);
+    Block block = blockchain.genesisBlock(stateDB);
+    block.mutableState().addBalance(addr, u256(100));
+    ExtVM fev(block.mutableState(), env, *blockchain.sealEngine(), addr, addr, addr, 0, 0, bytesConstRef(), bytesConstRef(), h256());
 
     fev.code = bytes(code, code + size);
+    g_max_pc = size;
     fev.codeHash = sha3(fev.code);
-    fev.gas = gas;
+    fev.origin = Address(0);
+    //fev.gas = gas;
+    fev.gasPrice = gasprice;
+    fev.myAddress = Address(0x155);
+    fev.caller = Address(0x155);
+    fev.value = balance; 
+
+    /* Run */
     try {
         auto vm = eth::VMFactory::create();
-        do_trace = true;
-        auto vmtrace = do_trace ? fev.simpleTrace() : OnOpFunc{};
-        vm->exec(fev.gas, fev, vmtrace);
+        u256 _gas(gas);
+        vm->exec(_gas, fev, simpleTrace());
     }
-    catch (VMException const&)
+    catch (VMException const& e)
     {
+        /* Catch normal VM exceptions such as out of gas, invalid jump dest, ... */
+        if ( do_trace ) {
+            std::cout << diagnostic_information(e) << std::endl;
+        }
+
+        /* Return failure */
         return 0;
     }
 
+    /* Return success */
     return 1;
 }
