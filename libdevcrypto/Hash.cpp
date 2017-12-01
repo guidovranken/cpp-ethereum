@@ -29,11 +29,11 @@ namespace dev
 
 h256 sha256(bytesConstRef _input) noexcept
 {
-	secp256k1_sha256_t ctx;
-	secp256k1_sha256_initialize(&ctx);
-	secp256k1_sha256_write(&ctx, _input.data(), _input.size());
+	cppethsecp256k1_sha256_t ctx;
+	cppethsecp256k1_sha256_initialize(&ctx);
+	cppethsecp256k1_sha256_write(&ctx, _input.data(), _input.size());
 	h256 hash;
-	secp256k1_sha256_finalize(&ctx, hash.data());
+	cppethsecp256k1_sha256_finalize(&ctx, hash.data());
 	return hash;
 }
 

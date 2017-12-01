@@ -52,9 +52,9 @@ namespace utf = boost::unit_test;
 BOOST_AUTO_TEST_SUITE(Crypto)
 
 struct DevcryptoTestFixture: public TestOutputHelperFixture {
-	DevcryptoTestFixture() : s_secp256k1(Secp256k1PP::get()) {}
+	DevcryptoTestFixture() : s_cppethsecp256k1(Secp256k1PP::get()) {}
 
-	Secp256k1PP* s_secp256k1;
+	Secp256k1PP* s_cppethsecp256k1;
 };
 BOOST_FIXTURE_TEST_SUITE(devcrypto, DevcryptoTestFixture)
 
@@ -124,9 +124,9 @@ BOOST_AUTO_TEST_CASE(keypairs)
 BOOST_AUTO_TEST_CASE(KeyPairVerifySecret)
 {
 	auto keyPair = KeyPair::create();
-	auto* ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
-	BOOST_CHECK(secp256k1_ec_seckey_verify(ctx, keyPair.secret().data()));
-	secp256k1_context_destroy(ctx);
+	auto* ctx = cppethsecp256k1_context_create(SECP256K1_CONTEXT_NONE);
+	BOOST_CHECK(cppethsecp256k1_ec_seckey_verify(ctx, keyPair.secret().data()));
+	cppethsecp256k1_context_destroy(ctx);
 }
 
 BOOST_AUTO_TEST_CASE(SignAndRecover)
@@ -163,7 +163,7 @@ BOOST_AUTO_TEST_CASE(cryptopp_patch)
 {
 	KeyPair k = KeyPair::create();
 	bytes io_text;
-	s_secp256k1->decrypt(k.secret(), io_text);
+	s_cppethsecp256k1->decrypt(k.secret(), io_text);
 	BOOST_REQUIRE_EQUAL(io_text.size(), 0);
 }
 
@@ -278,11 +278,11 @@ BOOST_AUTO_TEST_CASE(ecies_standard)
 	string original = message;
 	bytes b = asBytes(message);
 	
-	s_secp256k1->encryptECIES(k.pub(), b);
+	s_cppethsecp256k1->encryptECIES(k.pub(), b);
 	BOOST_REQUIRE(b != asBytes(original));
 	BOOST_REQUIRE(b.size() > 0 && b[0] == 0x04);
 	
-	s_secp256k1->decryptECIES(k.secret(), b);
+	s_cppethsecp256k1->decryptECIES(k.secret(), b);
 	BOOST_REQUIRE(bytesConstRef(&b).cropped(0, original.size()).toBytes() == asBytes(original));
 }
 
@@ -297,13 +297,13 @@ BOOST_AUTO_TEST_CASE(ecies_sharedMacData)
 	string shared("shared MAC data");
 	string wrongShared("wrong shared MAC data");
 
-	s_secp256k1->encryptECIES(k.pub(), shared, b);
+	s_cppethsecp256k1->encryptECIES(k.pub(), shared, b);
 	BOOST_REQUIRE(b != original);
 	BOOST_REQUIRE(b.size() > 0 && b[0] == 0x04);
 
-	BOOST_REQUIRE(!s_secp256k1->decryptECIES(k.secret(), wrongShared, b));
+	BOOST_REQUIRE(!s_cppethsecp256k1->decryptECIES(k.secret(), wrongShared, b));
 
-	s_secp256k1->decryptECIES(k.secret(), shared, b);
+	s_cppethsecp256k1->decryptECIES(k.secret(), shared, b);
 
 	auto decrypted = bytesConstRef(&b).cropped(0, original.size()).toBytes();
 	BOOST_CHECK_EQUAL(toHex(decrypted), toHex(original));
@@ -317,10 +317,10 @@ BOOST_AUTO_TEST_CASE(ecies_eckeypair)
 	string original = message;
 	
 	bytes b = asBytes(message);
-	s_secp256k1->encrypt(k.pub(), b);
+	s_cppethsecp256k1->encrypt(k.pub(), b);
 	BOOST_REQUIRE(b != asBytes(original));
 
-	s_secp256k1->decrypt(k.secret(), b);
+	s_cppethsecp256k1->decrypt(k.secret(), b);
 	BOOST_REQUIRE(b == asBytes(original));
 }
 
@@ -564,7 +564,7 @@ BOOST_AUTO_TEST_CASE(handshakeNew)
 		Secret ess;
 		// todo: ecdh-agree should be able to output bytes
 		BOOST_CHECK(ecdh::agree(eB.secret(), eAAuth, ess));
-//		s_secp256k1->agree(eB.seckey(), eAAuth, ess);
+//		s_cppethsecp256k1->agree(eB.seckey(), eAAuth, ess);
 		ess.ref().copyTo(keyMaterial.cropped(0, h256::size));
 		ssB.ref().copyTo(keyMaterial.cropped(h256::size, h256::size));
 //		auto token = sha3(ssA);

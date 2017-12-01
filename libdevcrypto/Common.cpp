@@ -43,11 +43,11 @@ using namespace dev::crypto;
 namespace
 {
 
-secp256k1_context const* getCtx()
+cppethsecp256k1_context const* getCtx()
 {
-	static std::unique_ptr<secp256k1_context, decltype(&secp256k1_context_destroy)> s_ctx{
-		secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY),
-		&secp256k1_context_destroy
+	static std::unique_ptr<cppethsecp256k1_context, decltype(&cppethsecp256k1_context_destroy)> s_ctx{
+		cppethsecp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY),
+		&cppethsecp256k1_context_destroy
 	};
 	return s_ctx.get();
 }
@@ -65,13 +65,13 @@ bool dev::SignatureStruct::isValid() const noexcept
 Public dev::toPublic(Secret const& _secret)
 {
 	auto* ctx = getCtx();
-	secp256k1_pubkey rawPubkey;
+	cppethsecp256k1_pubkey rawPubkey;
 	// Creation will fail if the secret key is invalid.
-	if (!secp256k1_ec_pubkey_create(ctx, &rawPubkey, _secret.data()))
+	if (!cppethsecp256k1_ec_pubkey_create(ctx, &rawPubkey, _secret.data()))
 		return {};
 	std::array<byte, 65> serializedPubkey;
 	size_t serializedPubkeySize = serializedPubkey.size();
-	secp256k1_ec_pubkey_serialize(
+	cppethsecp256k1_ec_pubkey_serialize(
 			ctx, serializedPubkey.data(), &serializedPubkeySize,
 			&rawPubkey, SECP256K1_EC_UNCOMPRESSED
 	);
@@ -205,17 +205,17 @@ Public dev::recover(Signature const& _sig, h256 const& _message)
 		return {};
 
 	auto* ctx = getCtx();
-	secp256k1_ecdsa_recoverable_signature rawSig;
-	if (!secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &rawSig, _sig.data(), v))
+	cppethsecp256k1_ecdsa_recoverable_signature rawSig;
+	if (!cppethsecp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &rawSig, _sig.data(), v))
 		return {};
 
-	secp256k1_pubkey rawPubkey;
-	if (!secp256k1_ecdsa_recover(ctx, &rawPubkey, &rawSig, _message.data()))
+	cppethsecp256k1_pubkey rawPubkey;
+	if (!cppethsecp256k1_ecdsa_recover(ctx, &rawPubkey, &rawSig, _message.data()))
 		return {};
 
 	std::array<byte, 65> serializedPubkey;
 	size_t serializedPubkeySize = serializedPubkey.size();
-	secp256k1_ec_pubkey_serialize(
+	cppethsecp256k1_ec_pubkey_serialize(
 			ctx, serializedPubkey.data(), &serializedPubkeySize,
 			&rawPubkey, SECP256K1_EC_UNCOMPRESSED
 	);
@@ -226,27 +226,27 @@ Public dev::recover(Signature const& _sig, h256 const& _message)
 	return Public{&serializedPubkey[1], Public::ConstructFromPointer};
 }
 
-static const u256 c_secp256k1n("115792089237316195423570985008687907852837564279074904382605163141518161494337");
+static const u256 c_cppethsecp256k1n("115792089237316195423570985008687907852837564279074904382605163141518161494337");
 
 Signature dev::sign(Secret const& _k, h256 const& _hash)
 {
 	auto* ctx = getCtx();
-	secp256k1_ecdsa_recoverable_signature rawSig;
-	if (!secp256k1_ecdsa_sign_recoverable(ctx, &rawSig, _hash.data(), _k.data(), nullptr, nullptr))
+	cppethsecp256k1_ecdsa_recoverable_signature rawSig;
+	if (!cppethsecp256k1_ecdsa_sign_recoverable(ctx, &rawSig, _hash.data(), _k.data(), nullptr, nullptr))
 		return {};
 
 	Signature s;
 	int v = 0;
-	secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, s.data(), &v, &rawSig);
+	cppethsecp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, s.data(), &v, &rawSig);
 
 	SignatureStruct& ss = *reinterpret_cast<SignatureStruct*>(&s);
 	ss.v = static_cast<byte>(v);
-	if (ss.s > c_secp256k1n / 2)
+	if (ss.s > c_cppethsecp256k1n / 2)
 	{
 		ss.v = static_cast<byte>(ss.v ^ 1);
-		ss.s = h256(c_secp256k1n - u256(ss.s));
+		ss.s = h256(c_cppethsecp256k1n - u256(ss.s));
 	}
-	assert(ss.s <= c_secp256k1n / 2);
+	assert(ss.s <= c_cppethsecp256k1n / 2);
 	return s;
 }
 
@@ -347,15 +347,15 @@ bool ecdh::agree(Secret const& _s, Public const& _r, Secret& o_s) noexcept
 {
 	auto* ctx = getCtx();
 	static_assert(sizeof(Secret) == 32, "Invalid Secret type size");
-	secp256k1_pubkey rawPubkey;
+	cppethsecp256k1_pubkey rawPubkey;
 	std::array<byte, 65> serializedPubKey{{0x04}};
 	std::copy(_r.asArray().begin(), _r.asArray().end(), serializedPubKey.begin() + 1);
-	if (!secp256k1_ec_pubkey_parse(ctx, &rawPubkey, serializedPubKey.data(), serializedPubKey.size()))
+	if (!cppethsecp256k1_ec_pubkey_parse(ctx, &rawPubkey, serializedPubKey.data(), serializedPubKey.size()))
 		return false;  // Invalid public key.
 	// FIXME: We should verify the public key when constructed, maybe even keep
-	//        secp256k1_pubkey as the internal data of Public.
+	//        cppethsecp256k1_pubkey as the internal data of Public.
 	std::array<byte, 33> compressedPoint;
-	if (!secp256k1_ecdh_raw(ctx, compressedPoint.data(), &rawPubkey, _s.data()))
+	if (!cppethsecp256k1_ecdh_raw(ctx, compressedPoint.data(), &rawPubkey, _s.data()))
 		return false;  // Invalid secret key.
 	std::copy(compressedPoint.begin() + 1, compressedPoint.end(), o_s.writable().data());
 	return true;
@@ -369,16 +369,16 @@ bytes ecies::kdf(Secret const& _z, bytes const& _s1, unsigned kdByteLen)
 	// the 4 bytes is okay. NIST specifies 4 bytes.
 	std::array<byte, 4> ctr{{0, 0, 0, 1}};
 	bytes k;
-	secp256k1_sha256_t ctx;
+	cppethsecp256k1_sha256_t ctx;
 	for (unsigned i = 0; i <= reps; i++)
 	{
-		secp256k1_sha256_initialize(&ctx);
-		secp256k1_sha256_write(&ctx, ctr.data(), ctr.size());
-		secp256k1_sha256_write(&ctx, _z.data(), Secret::size);
-		secp256k1_sha256_write(&ctx, _s1.data(), _s1.size());
+		cppethsecp256k1_sha256_initialize(&ctx);
+		cppethsecp256k1_sha256_write(&ctx, ctr.data(), ctr.size());
+		cppethsecp256k1_sha256_write(&ctx, _z.data(), Secret::size);
+		cppethsecp256k1_sha256_write(&ctx, _s1.data(), _s1.size());
 		// append hash to k
 		std::array<byte, 32> digest;
-		secp256k1_sha256_finalize(&ctx, digest.data());
+		cppethsecp256k1_sha256_finalize(&ctx, digest.data());
 
 		k.reserve(k.size() + h256::size);
 		move(digest.begin(), digest.end(), back_inserter(k));

@@ -33,7 +33,7 @@ namespace crypto
 static const unsigned c_eciesOverhead = 113;
 
 /**
- * CryptoPP secp256k1 algorithms.
+ * CryptoPP cppethsecp256k1 algorithms.
  * @todo Collect ECIES methods into class.
  */
 class Secp256k1PP
