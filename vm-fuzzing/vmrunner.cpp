@@ -129,6 +129,8 @@ int cpp_run_vm(
         uint64_t gasprice,
         uint64_t balance)
 {
+    int ret = 0;
+
     g_trace.clear();
     g_stack.clear();
     g_gas.clear();
@@ -153,12 +155,13 @@ int cpp_run_vm(
     Ethash::init();
     ChainParams p = ChainParams(genesisInfo(eth::Network::ByzantiumTest));
 
-    BlockChain blockchain(p, "/tmp/X", WithExisting::Kill);
     OverlayDB stateDB = OverlayDB();
     Address addr(0x155);
-    Block block = blockchain.genesisBlock(stateDB);
-    block.mutableState().addBalance(addr, u256(100));
-    ExtVM fev(block.mutableState(), env, *blockchain.sealEngine(), addr, addr, addr, 0, 0, bytesConstRef(), bytesConstRef(), h256());
+	SealEngineFace* sealEngine = p.createSealEngine();
+    State state(State::Null);
+    state.noteAccountStartNonce(u256(0));
+    state.addBalance(addr, u256(100));
+    ExtVM fev(state, env, *sealEngine, addr, addr, addr, 0, 0, bytesConstRef(), bytesConstRef(), h256());
 
     fev.code = bytes(code, code + size);
     g_max_pc = size;
@@ -183,10 +186,12 @@ int cpp_run_vm(
             std::cout << diagnostic_information(e) << std::endl;
         }
 
-        /* Return failure */
-        return 0;
+        goto end;
     }
 
-    /* Return success */
-    return 1;
+
+    ret = 1;
+end:
+    delete sealEngine;
+    return ret;
 }
