@@ -86,8 +86,20 @@ uint64_t VM::decodeJumpvDest(const byte* const _code, uint64_t& _pc, byte _voff)
 //
 void VM::onOperation()
 {
+    if ( m_code.size() < 33 ) {
+        /* This should never happen */
+        abort();
+    }
+    if ( m_PC > m_code.size() ) {
+        /* This implies reading across buffer bounds */
+        abort();
+    }
+    if ( m_PC >= m_code.size() - 33 ) {
+        /* Don't log OOB code as STOP */
+        return;
+    }
 	if (m_onOp)
-		(m_onOp)(++m_nSteps, m_PC, m_OP,
+		(m_onOp)(++m_nSteps, m_PC, (Instruction)(m_ext->code[m_PC]),
 			m_newMemSize > m_mem.size() ? (m_newMemSize - m_mem.size()) / 32 : uint64_t(0),
 			m_runGas, m_io_gas, this, m_ext);
 }
