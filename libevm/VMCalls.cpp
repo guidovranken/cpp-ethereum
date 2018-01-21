@@ -53,6 +53,7 @@ void VM::throwOutOfGas()
 
 void VM::throwBadInstruction()
 {
+    ON_OP();
 	// disabled to prevent duplicate steps in vmtrace log
 	//if (m_onFail)
 	//	(this->*m_onFail)();
