@@ -13,6 +13,14 @@
 #include <test/tools/libtesteth/TestHelper.h>
 #include <test/tools/libtestutils/TestLastBlockHashes.h>
 
+#include <openssl/md5.h>
+MD5_CTX g_md5_trace;
+MD5_CTX g_md5_stack;
+MD5_CTX g_md5_gas;
+
+uint8_t g_stack_hash[16];
+uint8_t g_trace_hash[16];
+
 typedef std::vector<uint8_t> stack_item_t;
 typedef std::vector<stack_item_t> stack_t;
 typedef std::pair<uint64_t, uint64_t> address_opcode_t;
@@ -33,7 +41,6 @@ stack_t g_stack;
 
 bool g_do_trace;
 uint64_t g_execution_num;
-uint64_t g_max_pc;
 
 /* Called by the fuzzer to retrieve instruction trace after execution */
 vm_trace_t cpp_get_trace(void)
@@ -41,10 +48,22 @@ vm_trace_t cpp_get_trace(void)
     return g_trace;
 }
 
+/* Called by the fuzzer to retrieve instruction trace hash after execution */
+void cpp_get_trace_hash(uint8_t* hash)
+{
+    memcpy(hash, g_trace_hash, sizeof(g_trace_hash));
+}
+
 /* Called by the fuzzer to retrieve stack after execution */
 stack_t cpp_get_stack(void)
 {
     return g_stack;
+}
+
+/* Called by the fuzzer to retrieve the stack hash after execution */
+void cpp_get_stack_hash(uint8_t* hash)
+{
+    memcpy(hash, g_stack_hash, sizeof(g_stack_hash));
 }
 
 /* Called by the fuzzer to retrieve gas trace after execution */
@@ -65,30 +84,26 @@ eth::OnOpFunc simpleTrace()
 
         ExtVM const& ext = *static_cast<ExtVM const*>(voidExt);
         eth::VM& vm = *voidVM;
+
         stack_t cur_stack;
 
-        /* If the VM tries to fetch an instruction from a non-existing code address,
-         * this is logged as STOP instruction.
-         * Intercept this behavior and don't log the artificial STOP.
-         */
-        if ( pc >= g_max_pc ) {
-            if ( (Instruction)inst != Instruction::STOP ) {
-                printf("??? OOB instruction is not STOP\n");
-                abort();
-            }
-            return;
-        }
-
+        /* Update MD5 over current stack */
         for (auto i: vm.stack()) {
             stack_item_t stack_item;
+            stack_item_t stack_item2;
 
             /* Convert Boost bigint to bytes */
             export_bits(i, std::back_inserter(stack_item), 8);
             /* Pad with zeroes */
-            for (int j = stack_item.size(); j < 32; j++) {
-                stack_item.push_back(0x00);
+            int stack_item_size = stack_item.size();
+            for (int j = 0; j < (32-stack_item_size); j++) {
+                stack_item2.push_back(0x00);
             }
-            cur_stack.push_back(stack_item);
+            for (int j = 0; j < stack_item_size; j++) {
+                stack_item2.push_back(stack_item[j]);
+            }
+            cur_stack.push_back(stack_item2);
+            if ( MD5_Update(&g_md5_stack, cur_stack.data(), cur_stack.size()) != 1 ) { abort(); }
         }
 
         /* Stack logging must be delayed by one execution to be aligned with
@@ -97,11 +112,12 @@ eth::OnOpFunc simpleTrace()
         prev_stack = cur_stack;
 
         if ( g_do_trace == true ) {
+
             /* Print current variables if --trace is specified */
             std::cout << "[" << g_execution_num << "] " << pc << " : " << instructionInfo((Instruction)inst).name << std::endl;
 
             std::cout << "Stack: [";
-            for ( auto S : cur_stack ) {
+            for ( auto S : g_stack ) {
                 std::cout << (h256)S << " ";
             }
             std::cout << "]" << std::endl;
@@ -112,14 +128,54 @@ eth::OnOpFunc simpleTrace()
 
         g_execution_num++;
 
-        g_trace.push_back( address_opcode_t(pc, (uint64_t)inst));
-        g_gas.push_back(static_cast<uint64_t>(gas));
+        /* Update MD5 over current address and opcode */
+        struct {
+            uint64_t address;
+            uint64_t opcode;
+        } address_opcode;
+        address_opcode.address = pc;
+        address_opcode.opcode = (uint8_t)inst;
+        if ( MD5_Update(&g_md5_trace, &address_opcode, sizeof(address_opcode)) != 1 ) { abort(); }
+
+        /* Update MD5 over current gas */
+        uint64_t gas_uint64 = static_cast<uint64_t>(gas);
+        if ( MD5_Update(&g_md5_gas, &gas_uint64, sizeof(gas_uint64)) != 1 ) { abort(); }
     };
+}
+
+extern "C" void cpp_get_prestate(size_t* address, size_t* balance, uint8_t** code, size_t* code_size, size_t idx);
+static void set_prestate(State* state)
+{
+    size_t i = 0;
+
+    while ( 1 ) {
+        size_t _address;
+        size_t balance;
+        uint8_t* code;
+        size_t code_size;
+
+        /* Retrieve the tuple (address, balance, code) from the fuzzer shim */
+        cpp_get_prestate(&_address, &balance, &code, &code_size, i);
+
+        if ( _address == 0 ) {
+            /* address set to 0 by cpp_get_prestate() signals the end of the account list */
+            break;
+        }
+
+        i += 1;
+
+        Address address(_address);
+
+        state->addBalance(address, balance);
+        state->setCode(address, bytes(code, code + code_size));
+    }
 }
 
 int cpp_run_vm(
         const uint8_t* code,
-        size_t size,
+        size_t codesize,
+        const uint8_t* input,
+        size_t inputsize,
         bool do_trace,
         uint64_t gas,
         uint64_t blocknumber,
@@ -130,6 +186,10 @@ int cpp_run_vm(
         uint64_t balance)
 {
     int ret = 0;
+
+    if ( MD5_Init(&g_md5_trace) != 1 ) { abort(); }
+    if ( MD5_Init(&g_md5_stack) != 1 ) { abort(); }
+    if ( MD5_Init(&g_md5_gas) != 1 ) { abort(); }
 
     g_trace.clear();
     g_stack.clear();
@@ -160,14 +220,22 @@ int cpp_run_vm(
 	SealEngineFace* sealEngine = p.createSealEngine();
     State state(State::Null);
     state.noteAccountStartNonce(u256(0));
-    state.addBalance(addr, u256(100));
+    state.addBalance(addr, u256(0));
+
+    /* Precompiles */
+    state.addBalance(Address(1), u256(1));
+    state.addBalance(Address(2), u256(1));
+    state.addBalance(Address(3), u256(1));
+    state.addBalance(Address(4), u256(1));
+
+    set_prestate(&state);
+
     ExtVM fev(state, env, *sealEngine, addr, addr, addr, 0, 0, bytesConstRef(), bytesConstRef(), h256());
 
-    fev.code = bytes(code, code + size);
-    g_max_pc = size;
-    fev.codeHash = sha3(fev.code);
+    fev.code = bytes(code, code + codesize);
+    fev.data = bytesConstRef(input, inputsize);
+    fev.codeHash = h256(0);
     fev.origin = Address(0);
-    //fev.gas = gas;
     fev.gasPrice = gasprice;
     fev.myAddress = Address(0x155);
     fev.caller = Address(0x155);
@@ -192,6 +260,12 @@ int cpp_run_vm(
 
     ret = 1;
 end:
+    unsigned char hash[MD5_DIGEST_LENGTH];
+    if ( MD5_Final(g_trace_hash, &g_md5_trace) != 1 ) { abort(); }
+    if ( MD5_Final(g_stack_hash, &g_md5_stack) != 1 ) { abort(); }
+    if ( MD5_Final(hash, &g_md5_gas) != 1 ) { abort(); }
+
     delete sealEngine;
+
     return ret;
 }
