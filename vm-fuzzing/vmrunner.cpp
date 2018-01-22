@@ -185,6 +185,8 @@ int cpp_run_vm(
         uint64_t gasprice,
         uint64_t balance)
 {
+    static bool ethash_initialized = false;
+    static ChainParams* p = NULL;
     int ret = 0;
 
     if ( MD5_Init(&g_md5_trace) != 1 ) { abort(); }
@@ -212,12 +214,17 @@ int cpp_run_vm(
     TestLastBlockHashes lastBlockHashes(h256s(256, h256()));
     eth::EnvInfo env(blockHeader, lastBlockHashes, 0);
 
-    Ethash::init();
-    ChainParams p = ChainParams(genesisInfo(eth::Network::ByzantiumTest));
+    if ( ethash_initialized == false ) {
+        Ethash::init();
+        ethash_initialized = true;
+    }
+    if ( p == NULL ) {
+        p = new ChainParams(genesisInfo(eth::Network::ByzantiumTest));
+    }
 
     OverlayDB stateDB = OverlayDB();
     Address addr(0x155);
-	SealEngineFace* sealEngine = p.createSealEngine();
+	SealEngineFace* sealEngine = p->createSealEngine();
     State state(State::Null);
     state.noteAccountStartNonce(u256(0));
     state.addBalance(addr, u256(0));
