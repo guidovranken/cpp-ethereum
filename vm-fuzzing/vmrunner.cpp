@@ -103,7 +103,7 @@ eth::OnOpFunc simpleTrace()
                 stack_item2.push_back(stack_item[j]);
             }
             cur_stack.push_back(stack_item2);
-            if ( MD5_Update(&g_md5_stack, cur_stack.data(), cur_stack.size()) != 1 ) { abort(); }
+            if ( MD5_Update(&g_md5_stack, stack_item2.data(), stack_item2.size()) != 1 ) { abort(); }
         }
 
         /* Stack logging must be delayed by one execution to be aligned with
@@ -117,7 +117,7 @@ eth::OnOpFunc simpleTrace()
             std::cout << "[" << g_execution_num << "] " << pc << " : " << instructionInfo((Instruction)inst).name << std::endl;
 
             std::cout << "Stack: [";
-            for ( auto S : g_stack ) {
+            for ( auto S : cur_stack ) {
                 std::cout << (h256)S << " ";
             }
             std::cout << "]" << std::endl;
