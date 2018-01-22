@@ -71,7 +71,6 @@ gas_t cpp_get_gas(void)
 {
     return g_gas;
 }
-
 eth::OnOpFunc simpleTrace()
 {
     /* Called by the VM for every executed instruction. */
@@ -91,19 +90,25 @@ eth::OnOpFunc simpleTrace()
         for (auto i: vm.stack()) {
             stack_item_t stack_item;
             stack_item_t stack_item2;
+            std::size_t size = i.backend().size();
+            boost::multiprecision::limb_type* p = i.backend().limbs();
 
-            /* Convert Boost bigint to bytes */
-            export_bits(i, std::back_inserter(stack_item), 8);
-            /* Pad with zeroes */
-            int stack_item_size = stack_item.size();
-            for (int j = 0; j < (32-stack_item_size); j++) {
-                stack_item2.push_back(0x00);
+            if ( size > 4 ) {
+                /* This shouldn't happen */
+                abort();
             }
-            for (int j = 0; j < stack_item_size; j++) {
-                stack_item2.push_back(stack_item[j]);
+
+            uint64_t S[4];
+            for (int j = 0; j < 4; j++) {
+                S[j] = (j < (int)size) ? p[j] : 0;
             }
-            cur_stack.push_back(stack_item2);
-            if ( MD5_Update(&g_md5_stack, stack_item2.data(), stack_item2.size()) != 1 ) { abort(); }
+
+            uint8_t reversed[32];
+            for (int j = 0; j < 32; j++) {
+                uint8_t* from = (uint8_t*)S;
+                reversed[j] = from[31-j];
+            }
+            if ( MD5_Update(&g_md5_stack, reversed, 32) != 1 ) { abort(); }
         }
 
         /* Stack logging must be delayed by one execution to be aligned with
